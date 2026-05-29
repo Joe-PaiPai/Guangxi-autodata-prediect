@@ -322,6 +322,7 @@
           </select>
           <button id="refreshBtn">刷新</button>
           <button id="importBtn">重新导入原始数据</button>
+          <button id="exportReportBtn">导出策略报告</button>
         </div>
         <div class="muted" id="dataStatus">正在读取数据...</div>
       </div>
@@ -389,6 +390,7 @@
       const rtMethodSelect = document.getElementById("rtMethodSelect");
       const refreshBtn = document.getElementById("refreshBtn");
       const importBtn = document.getElementById("importBtn");
+      const exportReportBtn = document.getElementById("exportReportBtn");
       const dataStatus = document.getElementById("dataStatus");
       const headline = document.getElementById("headline");
       const metrics = document.getElementById("metrics");
@@ -789,6 +791,11 @@
       dateSelect.addEventListener("change", () => loadDate(dateSelect.value));
       rtMethodSelect.addEventListener("change", () => loadDate(dateSelect.value));
       refreshBtn.addEventListener("click", () => loadDate(dateSelect.value));
+      exportReportBtn.addEventListener("click", () => {
+        const rtMethod = rtMethodSelect.value || "spread_follow";
+        const url = `/api/export/report/${dateSelect.value}?real_time_method=${rtMethod}`;
+        window.location.href = url;
+      });
       importBtn.addEventListener("click", async () => {
         importBtn.disabled = true;
         refreshBtn.disabled = true;

@@ -18,6 +18,7 @@ from app.analytics import (
 from app.db import get_connection, init_db
 from app.forecasting import REAL_TIME_METHODS, evaluate_day_ahead_model, predict_day_ahead_prices
 from app.importer import import_raw_data
+from app.report_export import export_strategy_docx
 
 
 app = FastAPI(title="广西现货交易辅助决策 API", version="0.1.0")
@@ -122,6 +123,17 @@ def get_real_time_methods() -> dict:
 def get_day_ahead_evaluation(end_date: str | None = None, days: int = 5) -> dict:
     with get_connection() as conn:
         return evaluate_day_ahead_model(conn, end_date=end_date, days=days)
+
+
+@app.get("/api/export/report/{market_date}")
+def export_report(market_date: str, real_time_method: str = "spread_follow") -> FileResponse:
+    with get_connection() as conn:
+        output_path = export_strategy_docx(conn, market_date, real_time_method=real_time_method)
+    return FileResponse(
+        output_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=output_path.name,
+    )
 
 
 @app.get("/")
