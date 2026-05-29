@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import json
 from datetime import date
+from datetime import datetime
+from pathlib import Path
 from statistics import mean
 
+import joblib
 import pandas as pd
 
 try:
@@ -40,6 +44,11 @@ FEATURE_COLUMNS = [
 ]
 
 LSTM_SEQUENCE_DAYS = 14
+ROOT_DIR = Path(__file__).resolve().parents[2]
+MODEL_DIR = ROOT_DIR / "data" / "models"
+XGBOOST_MODEL_PATH = MODEL_DIR / "day_ahead_xgboost.joblib"
+LSTM_MODEL_PATH = MODEL_DIR / "day_ahead_lstm.pt"
+MODEL_META_PATH = MODEL_DIR / "model_meta.json"
 
 
 REAL_TIME_METHODS = {
@@ -197,6 +206,13 @@ def _training_frame(conn: sqlite3.Connection, market_date: str, market_type: str
 def _xgboost_predict(conn: sqlite3.Connection, market_date: str) -> tuple[list[float | None], str]:
     if XGBRegressor is None:
         return [None] * 24, "xgboost_missing"
+    if XGBOOST_MODEL_PATH.exists():
+        try:
+            model = joblib.load(XGBOOST_MODEL_PATH)
+            x_target = pd.DataFrame([_feature_row(conn, market_date, hour) for hour in range(24)])[FEATURE_COLUMNS]
+            return [float(value) for value in model.predict(x_target)], "saved_xgboost"
+        except Exception:
+            pass
     frame = _training_frame(conn, market_date, "day_ahead")
     if len(frame) < 240:
         return [None] * 24, "not_enough_samples"
@@ -362,6 +378,31 @@ def _lstm_sequence_predict(conn: sqlite3.Connection, market_date: str) -> tuple[
     if torch is None or DayAheadLSTM is None:
         return _sequence_fallback_predict(conn, market_date)
 
+    if LSTM_MODEL_PATH.exists():
+        try:
+            payload = torch.load(LSTM_MODEL_PATH, map_location="cpu")
+            model = DayAheadLSTM(input_size=4, hidden_size=32)
+            model.load_state_dict(payload["state_dict"])
+            model.eval()
+            sequences = _target_lstm_sequences(
+                conn,
+                market_date,
+                payload["price_mean"],
+                payload["price_std"],
+                sequence_days=payload.get("sequence_days", LSTM_SEQUENCE_DAYS),
+            )
+            predictions: list[float | None] = []
+            with torch.no_grad():
+                for sequence in sequences:
+                    if sequence is None:
+                        predictions.append(None)
+                        continue
+                    value = model(torch.tensor([sequence], dtype=torch.float32)).item()
+                    predictions.append(value * payload["price_std"] + payload["price_mean"])
+            return predictions, "saved_pytorch_lstm"
+        except Exception:
+            pass
+
     x_rows, y_rows, price_mean, price_std = _build_lstm_training_data(conn, market_date)
     if len(x_rows) < 240:
         return _sequence_fallback_predict(conn, market_date)
@@ -495,6 +536,110 @@ def predict_day_ahead_prices(conn: sqlite3.Connection, market_date: str, force_f
             ],
         }
     return _forecast_day_ahead_components(conn, market_date)
+
+
+def train_day_ahead_models(conn: sqlite3.Connection) -> dict:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    latest_date_row = conn.execute(
+        """
+        SELECT MAX(market_date) AS market_date
+        FROM spot_price_hourly
+        WHERE market_type = 'day_ahead'
+        """
+    ).fetchone()
+    latest_date = latest_date_row["market_date"] if latest_date_row else None
+    if latest_date is None:
+        raise ValueError("No day-ahead price data is available for training.")
+
+    trained: dict[str, object] = {
+        "trained_at": datetime.now().isoformat(timespec="seconds"),
+        "latest_training_date": latest_date,
+        "feature_columns": FEATURE_COLUMNS,
+        "xgboost": {"status": "not_run"},
+        "lstm": {"status": "not_run"},
+    }
+
+    if XGBRegressor is not None:
+        frame = _training_frame(conn, "9999-12-31", "day_ahead")
+        if len(frame) >= 240:
+            model = XGBRegressor(
+                n_estimators=220,
+                max_depth=3,
+                learning_rate=0.05,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                objective="reg:squarederror",
+                random_state=42,
+                n_jobs=2,
+            )
+            model.fit(frame[FEATURE_COLUMNS], frame["target"])
+            joblib.dump(model, XGBOOST_MODEL_PATH)
+            trained["xgboost"] = {
+                "status": "trained",
+                "path": str(XGBOOST_MODEL_PATH),
+                "samples": int(len(frame)),
+            }
+        else:
+            trained["xgboost"] = {"status": "not_enough_samples", "samples": int(len(frame))}
+    else:
+        trained["xgboost"] = {"status": "missing_dependency"}
+
+    if torch is not None and DayAheadLSTM is not None:
+        x_rows, y_rows, price_mean, price_std = _build_lstm_training_data(conn, "9999-12-31")
+        if len(x_rows) >= 240:
+            torch.manual_seed(42)
+            torch.set_num_threads(2)
+            x_train = torch.tensor(x_rows, dtype=torch.float32)
+            y_train = torch.tensor(y_rows, dtype=torch.float32)
+            model = DayAheadLSTM(input_size=4, hidden_size=32)
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.012, weight_decay=0.0005)
+            loss_fn = nn.SmoothL1Loss()
+            final_loss = None
+            model.train()
+            for _ in range(120):
+                optimizer.zero_grad()
+                loss = loss_fn(model(x_train), y_train)
+                loss.backward()
+                optimizer.step()
+                final_loss = float(loss.item())
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "price_mean": price_mean,
+                    "price_std": price_std,
+                    "sequence_days": LSTM_SEQUENCE_DAYS,
+                },
+                LSTM_MODEL_PATH,
+            )
+            trained["lstm"] = {
+                "status": "trained",
+                "path": str(LSTM_MODEL_PATH),
+                "samples": len(x_rows),
+                "final_loss": round(final_loss or 0, 6),
+            }
+        else:
+            trained["lstm"] = {"status": "not_enough_samples", "samples": len(x_rows)}
+    else:
+        trained["lstm"] = {"status": "missing_dependency"}
+
+    MODEL_META_PATH.write_text(json.dumps(trained, ensure_ascii=False, indent=2), encoding="utf-8")
+    return model_status()
+
+
+def model_status() -> dict:
+    meta = {}
+    if MODEL_META_PATH.exists():
+        try:
+            meta = json.loads(MODEL_META_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            meta = {}
+    return {
+        "model_dir": str(MODEL_DIR),
+        "xgboost_exists": XGBOOST_MODEL_PATH.exists(),
+        "lstm_exists": LSTM_MODEL_PATH.exists(),
+        "meta_exists": MODEL_META_PATH.exists(),
+        "meta": meta,
+    }
 
 
 def _metric_values(pairs: list[tuple[float, float]]) -> dict:

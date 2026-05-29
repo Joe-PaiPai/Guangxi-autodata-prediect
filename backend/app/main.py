@@ -16,7 +16,13 @@ from app.analytics import (
     strategy_report,
 )
 from app.db import get_connection, init_db
-from app.forecasting import REAL_TIME_METHODS, evaluate_day_ahead_model, predict_day_ahead_prices
+from app.forecasting import (
+    REAL_TIME_METHODS,
+    evaluate_day_ahead_model,
+    model_status,
+    predict_day_ahead_prices,
+    train_day_ahead_models,
+)
 from app.importer import import_raw_data
 from app.report_export import export_strategy_docx
 
@@ -123,6 +129,20 @@ def get_real_time_methods() -> dict:
 def get_day_ahead_evaluation(end_date: str | None = None, days: int = 5) -> dict:
     with get_connection() as conn:
         return evaluate_day_ahead_model(conn, end_date=end_date, days=days)
+
+
+@app.get("/api/models/status")
+def get_model_status() -> dict:
+    return model_status()
+
+
+@app.post("/api/models/train")
+def train_models() -> dict:
+    with get_connection() as conn:
+        try:
+            return train_day_ahead_models(conn)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/export/report/{market_date}")

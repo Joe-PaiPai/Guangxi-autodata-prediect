@@ -21,6 +21,10 @@
   - 低价小时命中率
   - XGBoost、LSTM、混合集成模型对比
 - 支持一键导出 Word 策略报告。
+- 支持模型持久化：
+  - XGBoost 保存到 `data/models/day_ahead_xgboost.joblib`
+  - LSTM 保存到 `data/models/day_ahead_lstm.pt`
+  - 预测时优先读取已训练模型
 
 ## 目录结构
 
@@ -90,6 +94,8 @@ GET /api/prices/{market_date}
 GET /api/forecast/day-ahead/{market_date}
 GET /api/evaluation/day-ahead?end_date=2026-05-26&days=5
 GET /api/export/report/{market_date}
+GET /api/models/status
+POST /api/models/train
 ```
 
 实时价格方案参数：
@@ -109,8 +115,23 @@ GET /api/export/report/{market_date}?real_time_method=spread_follow
 
 网页顶部也有“导出策略报告”按钮，会按当前交易日和实时价方案下载报告。
 
+## 训练并保存模型
+
+网页顶部点击“训练模型”，或调用接口：
+
+```text
+POST /api/models/train
+```
+
+查看模型状态：
+
+```text
+GET /api/models/status
+```
+
+模型文件保存在本地 `data/models/`，不会上传到 GitHub。
+
 ## 下一步建议
 
 - 增加未来目标日手动上传入口。
-- 增加模型训练结果持久化，避免每次回测重复训练。
 - 增加日前价格和实时价格的分场景评估。

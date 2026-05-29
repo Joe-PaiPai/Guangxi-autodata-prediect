@@ -322,6 +322,7 @@
           </select>
           <button id="refreshBtn">刷新</button>
           <button id="importBtn">重新导入原始数据</button>
+          <button id="trainModelBtn">训练模型</button>
           <button id="exportReportBtn">导出策略报告</button>
         </div>
         <div class="muted" id="dataStatus">正在读取数据...</div>
@@ -330,6 +331,13 @@
       <p class="headline" id="headline">正在生成结论...</p>
 
       <section class="grid" id="metrics"></section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-12">
+          <h2>模型状态</h2>
+          <div id="modelStatusBox"></div>
+        </div>
+      </section>
 
       <section class="grid" style="margin-top: 12px">
         <div class="panel span-12">
@@ -390,10 +398,12 @@
       const rtMethodSelect = document.getElementById("rtMethodSelect");
       const refreshBtn = document.getElementById("refreshBtn");
       const importBtn = document.getElementById("importBtn");
+      const trainModelBtn = document.getElementById("trainModelBtn");
       const exportReportBtn = document.getElementById("exportReportBtn");
       const dataStatus = document.getElementById("dataStatus");
       const headline = document.getElementById("headline");
       const metrics = document.getElementById("metrics");
+      const modelStatusBox = document.getElementById("modelStatusBox");
       const reportList = document.getElementById("reportList");
       const priceChart = document.getElementById("priceChart");
       const spreadChart = document.getElementById("spreadChart");
@@ -441,6 +451,22 @@
         }
         const modeText = report.mode === "target_day" ? "目标日报价辅助模式：该日暂无实时价格" : "复盘分析模式：该日已有实时价格";
         reportList.innerHTML = [`${modeText}`, ...items].map((text) => `<li>${text}</li>`).join("");
+      }
+
+      function renderModelStatus(status) {
+        const meta = status.meta || {};
+        const xgb = meta.xgboost || {};
+        const lstm = meta.lstm || {};
+        modelStatusBox.innerHTML = `
+          <div class="grid">
+            ${metric("最后训练时间", meta.trained_at || "-", `训练截止 ${meta.latest_training_date || "-"}`)}
+            ${metric("XGBoost", status.xgboost_exists ? "已保存" : "未训练", `状态 ${xgb.status || "-"}`)}
+            ${metric("LSTM", status.lstm_exists ? "已保存" : "未训练", `状态 ${lstm.status || "-"}`)}
+            ${metric("训练样本", `${xgb.samples || 0} / ${lstm.samples || 0}`, "XGBoost / LSTM")}
+            ${metric("模型目录", status.meta_exists ? "可用" : "待训练", status.model_dir || "-")}
+            ${metric("预测优先级", status.xgboost_exists || status.lstm_exists ? "读取已训练模型" : "临时训练", "没有模型时自动兜底")}
+          </div>
+        `;
       }
 
       function scale(values, minPixel, maxPixel) {
@@ -745,12 +771,13 @@
       async function loadDate(marketDate) {
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality, evaluation] = await Promise.all([
+        const [report, prices, history, quality, evaluation, modelStatus] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
           api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
+          api(`/api/models/status`),
         ]);
         const chartRows = prices.some((r) => r.real_time_price !== null)
           ? prices
@@ -762,6 +789,7 @@
             }));
         headline.innerHTML = `${report.headline}<span class="mode-pill">${report.mode === "target_day" ? "目标日" : "复盘"}</span>`;
         renderMetrics(report.summary);
+        renderModelStatus(modelStatus);
         renderReportList(report);
         renderPriceChart(chartRows);
         renderSpreadChart(chartRows);
@@ -795,6 +823,23 @@
         const rtMethod = rtMethodSelect.value || "spread_follow";
         const url = `/api/export/report/${dateSelect.value}?real_time_method=${rtMethod}`;
         window.location.href = url;
+      });
+      trainModelBtn.addEventListener("click", async () => {
+        trainModelBtn.disabled = true;
+        refreshBtn.disabled = true;
+        dataStatus.textContent = "正在训练日前价格模型，请稍等...";
+        try {
+          const status = await postApi("/api/models/train");
+          renderModelStatus(status);
+          dataStatus.textContent = "模型训练完成，正在刷新分析...";
+          await loadDate(dateSelect.value);
+        } catch (err) {
+          dataStatus.textContent = "模型训练失败";
+          headline.textContent = err.message;
+        } finally {
+          trainModelBtn.disabled = false;
+          refreshBtn.disabled = false;
+        }
       });
       importBtn.addEventListener("click", async () => {
         importBtn.disabled = true;
