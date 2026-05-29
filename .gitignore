@@ -1,0 +1,35 @@
+# Local data and generated databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Raw market files are private and large
+现货交易电网信息/
+
+# Reference clone used during analysis
+repo-read/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Node/frontend generated files
+node_modules/
+dist/
+build/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log

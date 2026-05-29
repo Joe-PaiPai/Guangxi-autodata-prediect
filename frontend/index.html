@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>广西现货交易辅助决策</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8fb;
+        --panel: #ffffff;
+        --text: #172033;
+        --muted: #657085;
+        --line: #dde3ee;
+        --blue: #1f6feb;
+        --green: #178f5b;
+        --red: #d4380d;
+        --amber: #b7791f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      }
+
+      header {
+        background: #111827;
+        color: white;
+        padding: 18px 28px;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      header p {
+        margin: 6px 0 0;
+        color: #cbd5e1;
+        font-size: 13px;
+      }
+
+      main {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 20px 24px 36px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .toolbar label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      select,
+      button {
+        height: 36px;
+        border: 1px solid var(--line);
+        background: white;
+        color: var(--text);
+        padding: 0 12px;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+
+      button {
+        background: #172033;
+        color: white;
+        cursor: pointer;
+      }
+
+      .headline {
+        margin: 0 0 16px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 12px;
+      }
+
+      .metric {
+        grid-column: span 2;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+        min-height: 88px;
+      }
+
+      .metric .label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric .value {
+        margin-top: 8px;
+        font-size: 24px;
+        font-weight: 750;
+      }
+
+      .metric .sub {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+      }
+
+      .span-8 {
+        grid-column: span 8;
+      }
+
+      .span-4 {
+        grid-column: span 4;
+      }
+
+      .span-12 {
+        grid-column: span 12;
+      }
+
+      .span-6 {
+        grid-column: span 6;
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+
+      .report-list {
+        display: grid;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .report-list li {
+        border-left: 3px solid var(--blue);
+        background: #f9fbfe;
+        padding: 9px 11px;
+        color: #243047;
+      }
+
+      .legend {
+        display: flex;
+        gap: 16px;
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+
+      .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 18px;
+        height: 3px;
+        margin-right: 6px;
+        vertical-align: middle;
+        background: var(--blue);
+      }
+
+      .legend .rt::before {
+        background: var(--green);
+      }
+
+      svg {
+        width: 100%;
+        height: 320px;
+        display: block;
+      }
+
+      .axis {
+        stroke: #9aa4b2;
+        stroke-width: 1;
+      }
+
+      .grid-line {
+        stroke: #e8edf5;
+        stroke-width: 1;
+      }
+
+      .line-da {
+        fill: none;
+        stroke: var(--blue);
+        stroke-width: 2.5;
+      }
+
+      .line-rt {
+        fill: none;
+        stroke: var(--green);
+        stroke-width: 2.5;
+      }
+
+      .bar-positive {
+        fill: rgba(212, 56, 13, 0.72);
+      }
+
+      .bar-negative {
+        fill: rgba(31, 111, 235, 0.58);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 9px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 650;
+        background: #f9fbfe;
+      }
+
+      .tag {
+        display: inline-block;
+        border-radius: 4px;
+        padding: 2px 7px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .tag-high {
+        background: #fff1e8;
+        color: var(--red);
+      }
+
+      .tag-mid {
+        background: #fff8df;
+        color: var(--amber);
+      }
+
+      .tag-low {
+        background: #eaf8f0;
+        color: var(--green);
+      }
+
+      .mode-pill {
+        display: inline-block;
+        margin-left: 10px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: #e8f1ff;
+        color: var(--blue);
+        font-size: 12px;
+        vertical-align: middle;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .empty {
+        padding: 32px;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      @media (max-width: 980px) {
+        .metric,
+        .span-4,
+        .span-6,
+        .span-8 {
+          grid-column: span 12;
+        }
+
+        .toolbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>广西现货交易辅助决策</h1>
+      <p>日前价格、实时价格、价差和供需边际分析</p>
+    </header>
+
+    <main>
+      <div class="toolbar">
+        <div>
+          <label for="dateSelect">交易日期</label>
+          <select id="dateSelect"></select>
+          <label for="rtMethodSelect">实时价方案</label>
+          <select id="rtMethodSelect">
+            <option value="spread_follow">价差跟随法</option>
+            <option value="similar_direct">相似日直接法</option>
+            <option value="tightness_adjusted">松紧度修正法</option>
+            <option value="conservative_range">保守区间法</option>
+          </select>
+          <button id="refreshBtn">刷新</button>
+          <button id="importBtn">重新导入原始数据</button>
+        </div>
+        <div class="muted" id="dataStatus">正在读取数据...</div>
+      </div>
+
+      <p class="headline" id="headline">正在生成结论...</p>
+
+      <section class="grid" id="metrics"></section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-12">
+          <h2>策略建议报告</h2>
+          <ul class="report-list" id="reportList"></ul>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-8">
+          <h2>日前与实时价格曲线</h2>
+          <div class="legend"><span>日前价格</span><span class="rt">实时价格</span></div>
+          <svg id="priceChart" viewBox="0 0 900 320" role="img"></svg>
+        </div>
+        <div class="panel span-4">
+          <h2>实时-日前价差</h2>
+          <svg id="spreadChart" viewBox="0 0 420 320" role="img"></svg>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-12">
+          <h2>广西供需边际曲线</h2>
+          <div class="legend"><span>需求：统调负荷 + 省间联络线</span><span class="rt">供给：水电 + 新能源</span></div>
+          <svg id="supplyChart" viewBox="0 0 900 320" role="img"></svg>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-8">
+          <h2>近 14 日均价趋势</h2>
+          <div class="legend"><span>日前均价</span><span class="rt">实时均价</span></div>
+          <svg id="historyChart" viewBox="0 0 900 320" role="img"></svg>
+        </div>
+        <div class="panel span-4">
+          <h2>数据完整性</h2>
+          <div id="qualityBox"></div>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-12">
+          <h2>每小时报价倾向</h2>
+          <div id="adviceTable"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const dateSelect = document.getElementById("dateSelect");
+      const rtMethodSelect = document.getElementById("rtMethodSelect");
+      const refreshBtn = document.getElementById("refreshBtn");
+      const importBtn = document.getElementById("importBtn");
+      const dataStatus = document.getElementById("dataStatus");
+      const headline = document.getElementById("headline");
+      const metrics = document.getElementById("metrics");
+      const reportList = document.getElementById("reportList");
+      const priceChart = document.getElementById("priceChart");
+      const spreadChart = document.getElementById("spreadChart");
+      const supplyChart = document.getElementById("supplyChart");
+      const historyChart = document.getElementById("historyChart");
+      const qualityBox = document.getElementById("qualityBox");
+      const adviceTable = document.getElementById("adviceTable");
+
+      const fmt = (value, digits = 1) =>
+        value === null || value === undefined ? "-" : Number(value).toFixed(digits);
+
+      async function api(path) {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+
+      async function postApi(path) {
+        const res = await fetch(path, { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+
+      function metric(label, value, sub = "") {
+        return `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+      }
+
+      function renderMetrics(summary) {
+        metrics.innerHTML = [
+          metric("日前均价", `${fmt(summary.day_ahead.avg)} 元/MWh`, `峰谷差 ${fmt(summary.day_ahead.range)}`),
+          metric("实时均价", `${fmt(summary.real_time.avg)} 元/MWh`, `波动 ${fmt(summary.real_time.range)}`),
+          metric("平均价差", `${fmt(summary.spread_real_minus_day_ahead.avg)} 元/MWh`, "实时 - 日前"),
+          metric("日前最高", `${fmt(summary.day_ahead.max)} 元/MWh`, `小时 ${summary.high_day_ahead_hours[0]?.hour ?? "-"}`),
+          metric("日前最低", `${fmt(summary.day_ahead.min)} 元/MWh`, `小时 ${summary.low_day_ahead_hours[0]?.hour ?? "-"}`),
+          metric("价差最大", `${fmt(summary.spread_real_minus_day_ahead.max)} 元/MWh`, "实时溢价"),
+        ].join("");
+      }
+
+      function renderReportList(report) {
+        const items = [...(report.narrative || [])];
+        if (report.high_risk_hours?.length) {
+          items.push(`高风险时段：${report.high_risk_hours.slice(0, 10).map((h) => `${h}:00`).join("、")}`);
+        }
+        const modeText = report.mode === "target_day" ? "目标日报价辅助模式：该日暂无实时价格" : "复盘分析模式：该日已有实时价格";
+        reportList.innerHTML = [`${modeText}`, ...items].map((text) => `<li>${text}</li>`).join("");
+      }
+
+      function scale(values, minPixel, maxPixel) {
+        const valid = values.filter((v) => v !== null && v !== undefined);
+        const min = Math.min(...valid);
+        const max = Math.max(...valid);
+        const span = max - min || 1;
+        return (value) => maxPixel - ((value - min) / span) * (maxPixel - minPixel);
+      }
+
+      function renderPriceChart(rows) {
+        const width = 900;
+        const height = 320;
+        const left = 44;
+        const right = 18;
+        const top = 18;
+        const bottom = 36;
+        const values = rows.flatMap((r) => [r.day_ahead_price, r.real_time_price]).filter((v) => v !== null);
+        const y = scale(values, top, height - bottom);
+        const x = (hour) => left + (hour / 23) * (width - left - right);
+        const line = (field) =>
+          rows
+            .filter((r) => r[field] !== null && r[field] !== undefined)
+            .map((r, i) => `${i === 0 ? "M" : "L"} ${x(r.hour).toFixed(2)} ${y(r[field]).toFixed(2)}`)
+            .join(" ");
+        const grid = [0, 1, 2, 3, 4]
+          .map((i) => {
+            const yy = top + i * ((height - top - bottom) / 4);
+            return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}"></line>`;
+          })
+          .join("");
+        const labels = [0, 6, 12, 18, 23]
+          .map((h) => `<text x="${x(h)}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#657085">${h}:00</text>`)
+          .join("");
+        priceChart.innerHTML = `
+          ${grid}
+          <line class="axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+          <line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}"></line>
+          <path class="line-da" d="${line("day_ahead_price")}"></path>
+          <path class="line-rt" d="${line("real_time_price")}"></path>
+          ${labels}
+        `;
+      }
+
+      function renderSpreadChart(rows) {
+        const width = 420;
+        const height = 320;
+        const left = 34;
+        const top = 18;
+        const bottom = 36;
+        const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.spread_real_minus_day_ahead || 0)));
+        const zeroY = top + (height - top - bottom) / 2;
+        const barW = (width - left - 12) / 24 - 2;
+        const bars = rows
+          .map((r) => {
+            const spread = r.spread_real_minus_day_ahead || 0;
+            const h = Math.abs(spread) / maxAbs * ((height - top - bottom) / 2);
+            const x = left + r.hour * (barW + 2);
+            const y = spread >= 0 ? zeroY - h : zeroY;
+            const klass = spread >= 0 ? "bar-positive" : "bar-negative";
+            return `<rect class="${klass}" x="${x}" y="${y}" width="${barW}" height="${h}"></rect>`;
+          })
+          .join("");
+        const labels = [0, 6, 12, 18, 23]
+          .map((h) => `<text x="${left + h * (barW + 2) + barW / 2}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#657085">${h}</text>`)
+          .join("");
+        spreadChart.innerHTML = `
+          <line class="grid-line" x1="${left}" y1="${zeroY}" x2="${width - 8}" y2="${zeroY}"></line>
+          ${bars}
+          ${labels}
+        `;
+      }
+
+      function renderSupplyChart(rows) {
+        const width = 900;
+        const height = 320;
+        const left = 46;
+        const right = 18;
+        const top = 18;
+        const bottom = 36;
+        const values = rows
+          .flatMap((r) => [r.demand_total, r.supply_total])
+          .filter((v) => v !== null && v !== undefined);
+        if (!values.length) {
+          supplyChart.innerHTML = `<text x="40" y="80" font-size="14" fill="#657085">该日没有可展示的广西供需曲线</text>`;
+          return;
+        }
+        const y = scale(values, top, height - bottom);
+        const x = (hour) => left + (hour / 23) * (width - left - right);
+        const line = (field) =>
+          rows
+            .filter((r) => r[field] !== null && r[field] !== undefined)
+            .map((r, i) => `${i === 0 ? "M" : "L"} ${x(r.hour).toFixed(2)} ${y(r[field]).toFixed(2)}`)
+            .join(" ");
+        const grid = [0, 1, 2, 3, 4]
+          .map((i) => {
+            const yy = top + i * ((height - top - bottom) / 4);
+            return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}"></line>`;
+          })
+          .join("");
+        const labels = [0, 6, 12, 18, 23]
+          .map((h) => `<text x="${x(h)}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#657085">${h}:00</text>`)
+          .join("");
+        supplyChart.innerHTML = `
+          ${grid}
+          <line class="axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+          <line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}"></line>
+          <path class="line-da" d="${line("demand_total")}"></path>
+          <path class="line-rt" d="${line("supply_total")}"></path>
+          ${labels}
+        `;
+      }
+
+      function renderHistoryChart(rows) {
+        const width = 900;
+        const height = 320;
+        const left = 46;
+        const right = 20;
+        const top = 18;
+        const bottom = 46;
+        const values = rows
+          .flatMap((r) => [r.day_ahead_avg, r.real_time_avg])
+          .filter((v) => v !== null && v !== undefined);
+        if (!values.length) {
+          historyChart.innerHTML = `<text x="40" y="80" font-size="14" fill="#657085">没有历史趋势数据</text>`;
+          return;
+        }
+        const y = scale(values, top, height - bottom);
+        const x = (idx) => left + (idx / Math.max(rows.length - 1, 1)) * (width - left - right);
+        const line = (field) =>
+          rows
+            .filter((r) => r[field] !== null && r[field] !== undefined)
+            .map((r, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(2)} ${y(r[field]).toFixed(2)}`)
+            .join(" ");
+        const grid = [0, 1, 2, 3, 4]
+          .map((i) => {
+            const yy = top + i * ((height - top - bottom) / 4);
+            return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}"></line>`;
+          })
+          .join("");
+        const labels = rows
+          .map((r, i) => i % Math.ceil(rows.length / 6) === 0 || i === rows.length - 1
+            ? `<text x="${x(i)}" y="${height - 14}" text-anchor="middle" font-size="11" fill="#657085">${r.market_date.slice(5)}</text>`
+            : "")
+          .join("");
+        historyChart.innerHTML = `
+          ${grid}
+          <line class="axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+          <line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}"></line>
+          <path class="line-da" d="${line("day_ahead_avg")}"></path>
+          <path class="line-rt" d="${line("real_time_avg")}"></path>
+          ${labels}
+        `;
+      }
+
+      function renderQuality(quality) {
+        const rows = quality.checks
+          .map((item) => {
+            const ok = item.status === "完整";
+            return `
+              <tr>
+                <td>${item.name}</td>
+                <td><span class="tag ${ok ? "tag-low" : "tag-high"}">${item.status}</span></td>
+                <td>${item.detail}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        qualityBox.innerHTML = `
+          <div class="metric" style="grid-column: auto; margin-bottom: 12px">
+            <div class="label">完整性评分</div>
+            <div class="value">${fmt(quality.score, 1)}%</div>
+            <div class="sub">${quality.market_date}</div>
+          </div>
+          <table>
+            <thead><tr><th>数据项</th><th>状态</th><th>明细</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        `;
+      }
+
+      function renderAdvice(rows) {
+        if (!rows.length) {
+          adviceTable.innerHTML = `<div class="empty">没有可展示的建议</div>`;
+          return;
+        }
+        const body = rows
+          .map((r) => {
+            const tagClass = r.risk_level === "高" ? "tag-high" : r.risk_level === "中" ? "tag-mid" : "tag-low";
+            const similar = r.similar_reference?.samples?.slice(0, 2)
+              .map((s) => `${s.market_date.slice(5)} ${String(s.hour).padStart(2, "0")}:00 DA${fmt(s.day_ahead_price, 0)} RT${fmt(s.real_time_price, 0)}`)
+              .join("<br>") || "-";
+            return `
+              <tr>
+                <td>${String(r.hour).padStart(2, "0")}:00</td>
+                <td><span class="tag ${tagClass}">${r.risk_level}</span></td>
+                <td>${r.stance}</td>
+                <td>${fmt(r.day_ahead_price)}${r.day_ahead_source === "forecast" ? `<br><span class="muted">预测 ${fmt((r.day_ahead_confidence || 0) * 100, 0)}%</span>` : ""}</td>
+                <td>${fmt(r.real_time_price)}${r.real_time_source === "forecast" ? `<br><span class="muted">${r.real_time_forecast?.method_name || "预测"}</span>` : ""}</td>
+                <td>${fmt(r.spread_real_minus_day_ahead)}</td>
+                <td>${fmt(r.quote_lower, 0)}-${fmt(r.quote_upper, 0)}</td>
+                <td>${fmt(r.quote_center, 0)}</td>
+                <td>${r.tightness_label}<br><span class="muted">${fmt(r.tightness_score, 0)}</span></td>
+                <td>${fmt(r.day_ahead_percentile, 0)}%</td>
+                <td>${fmt(r.recent_7d_same_hour_avg)}</td>
+                <td>${fmt(r.previous_day_change)}</td>
+                <td>${fmt(r.supply_total_mw, 0)} / ${fmt(r.demand_total_mw, 0)}</td>
+                <td>${similar}</td>
+                <td>${r.reasons.join("；")}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        adviceTable.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>小时</th><th>风险</th><th>报价倾向</th><th>日前价</th><th>实时价</th><th>价差</th><th>建议区间</th><th>建议中枢</th><th>松紧</th><th>历史分位</th><th>近7日</th><th>较前日</th><th>供/需</th><th>相似参考</th><th>原因</th>
+              </tr>
+            </thead>
+            <tbody>${body}</tbody>
+          </table>
+        `;
+      }
+
+      async function loadDate(marketDate) {
+        dataStatus.textContent = "正在生成分析...";
+        const rtMethod = rtMethodSelect.value || "spread_follow";
+        const [report, prices, history, quality] = await Promise.all([
+          api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
+          api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
+          api(`/api/history/${marketDate}?days=14`),
+          api(`/api/quality/${marketDate}`),
+        ]);
+        const chartRows = prices.some((r) => r.real_time_price !== null)
+          ? prices
+          : report.hourly_advice.map((r) => ({
+              hour: r.hour,
+              day_ahead_price: r.day_ahead_price,
+              real_time_price: r.real_time_price,
+              spread_real_minus_day_ahead: r.spread_real_minus_day_ahead,
+            }));
+        headline.innerHTML = `${report.headline}<span class="mode-pill">${report.mode === "target_day" ? "目标日" : "复盘"}</span>`;
+        renderMetrics(report.summary);
+        renderReportList(report);
+        renderPriceChart(chartRows);
+        renderSpreadChart(chartRows);
+        renderSupplyChart(report.supply_series || []);
+        renderHistoryChart(history);
+        renderQuality(quality);
+        renderAdvice(report.hourly_advice);
+        dataStatus.textContent = `已加载 ${marketDate}`;
+      }
+
+      async function init() {
+        try {
+          const dates = await api("/api/dates");
+          dateSelect.innerHTML = dates
+            .map((d) => `<option value="${d.market_date}">${d.market_date} 日前 ${d.day_ahead_hours || 0}h / 实时 ${d.real_time_hours || 0}h</option>`)
+            .join("");
+          const defaultDate = dates.find((d) => d.day_ahead_hours === 24 && d.real_time_hours === 24)?.market_date || dates[0]?.market_date;
+          dateSelect.value = defaultDate;
+          await loadDate(defaultDate);
+        } catch (err) {
+          dataStatus.textContent = "加载失败";
+          headline.textContent = err.message;
+        }
+      }
+
+      dateSelect.addEventListener("change", () => loadDate(dateSelect.value));
+      rtMethodSelect.addEventListener("change", () => loadDate(dateSelect.value));
+      refreshBtn.addEventListener("click", () => loadDate(dateSelect.value));
+      importBtn.addEventListener("click", async () => {
+        importBtn.disabled = true;
+        refreshBtn.disabled = true;
+        dataStatus.textContent = "正在重新导入原始 Excel，请稍等...";
+        try {
+          const result = await postApi("/api/import");
+          dataStatus.textContent = `导入完成：价格 ${result.price_rows} 条，15分钟曲线 ${result.curve_15min_rows} 条`;
+          await init();
+        } catch (err) {
+          dataStatus.textContent = "导入失败";
+          headline.textContent = err.message;
+        } finally {
+          importBtn.disabled = false;
+          refreshBtn.disabled = false;
+        }
+      });
+      init();
+    </script>
+  </body>
+</html>
