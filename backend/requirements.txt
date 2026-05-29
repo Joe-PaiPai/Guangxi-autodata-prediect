@@ -7,3 +7,4 @@ xgboost==3.2.0
 scikit-learn==1.8.0
 joblib==1.5.3
 python-docx==1.1.2
+python-multipart==0.0.20

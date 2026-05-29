@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+import shutil
+from pathlib import Path, PurePosixPath
+from zipfile import BadZipFile, ZipFile
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,10 +32,89 @@ from app.report_export import export_strategy_docx
 app = FastAPI(title="广西现货交易辅助决策 API", version="0.1.0")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
+UPLOAD_DIR = ROOT_DIR / "data" / "uploads"
+RAW_EXCEL_EXTENSIONS = {".xls", ".xlsx", ".xlsm"}
 RAW_DATA_DIR = ROOT_DIR / "现货交易电网信息"
 
 if FRONTEND_DIR.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")
+
+
+def _import_response(stats) -> dict:
+    return {
+        "message": "导入完成",
+        "files_seen": stats.files_seen,
+        "price_rows": stats.price_rows,
+        "curve_15min_rows": stats.curve_15min_rows,
+        "curve_hourly_rows": stats.curve_hourly_rows,
+        "skipped_files": stats.skipped_files,
+        "errors": stats.errors,
+    }
+
+
+@app.post("/api/import/upload")
+async def upload_and_import(file: UploadFile = File(...)) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="请上传 ZIP 压缩包")
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    upload_path = UPLOAD_DIR / "latest_raw_data.zip"
+    with open(upload_path, "wb") as dst:
+        while chunk := await file.read(1024 * 1024):
+            dst.write(chunk)
+
+    upload_stats = _replace_raw_data_from_zip(upload_path)
+    stats = import_raw_data(RAW_DATA_DIR, reset=True)
+    return {**_import_response(stats), **upload_stats}
+
+
+def _safe_zip_parts(raw_name: str) -> tuple[str, ...] | None:
+    name = raw_name.replace("\\", "/").strip("/")
+    if not name or name.endswith("/"):
+        return None
+    parts = PurePosixPath(name).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        return None
+    if parts[0] != RAW_DATA_DIR.name:
+        return None
+    if len(parts) > 1 and parts[1].startswith("0"):
+        return None
+    if Path(parts[-1]).suffix.lower() not in RAW_EXCEL_EXTENSIONS:
+        return None
+    return parts[1:]
+
+
+def _replace_raw_data_from_zip(zip_path: Path) -> dict:
+    temp_dir = UPLOAD_DIR / "raw_extract_tmp"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    extracted = 0
+    skipped = 0
+    try:
+        with ZipFile(zip_path) as archive:
+            for info in archive.infolist():
+                parts = _safe_zip_parts(info.filename)
+                if not parts:
+                    skipped += 1
+                    continue
+
+                target = temp_dir.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                extracted += 1
+    except BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="上传文件不是有效 ZIP 压缩包") from exc
+
+    if extracted == 0:
+        raise HTTPException(status_code=400, detail="ZIP 中没有可导入的原始 Excel 文件")
+
+    if RAW_DATA_DIR.exists():
+        shutil.rmtree(RAW_DATA_DIR)
+    temp_dir.rename(RAW_DATA_DIR)
+    return {"uploaded_excel_files": extracted, "skipped_zip_entries": skipped}
 
 
 @app.on_event("startup")
@@ -58,15 +139,7 @@ def run_import() -> dict:
     if not RAW_DATA_DIR.exists():
         raise HTTPException(status_code=404, detail="未找到原始数据目录")
     stats = import_raw_data(RAW_DATA_DIR, reset=True)
-    return {
-        "message": "导入完成",
-        "files_seen": stats.files_seen,
-        "price_rows": stats.price_rows,
-        "curve_15min_rows": stats.curve_15min_rows,
-        "curve_hourly_rows": stats.curve_hourly_rows,
-        "skipped_files": stats.skipped_files,
-        "errors": stats.errors,
-    }
+    return _import_response(stats)
 
 
 @app.get("/api/prices/{market_date}")

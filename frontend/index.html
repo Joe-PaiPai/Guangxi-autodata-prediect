@@ -322,6 +322,8 @@
           </select>
           <button id="refreshBtn">刷新</button>
           <button id="importBtn">重新导入原始数据</button>
+          <input id="zipUploadInput" type="file" accept=".zip" style="display: none" />
+          <button id="uploadZipBtn">上传压缩包并导入</button>
           <button id="trainModelBtn">训练模型</button>
           <button id="exportReportBtn">导出策略报告</button>
         </div>
@@ -398,6 +400,8 @@
       const rtMethodSelect = document.getElementById("rtMethodSelect");
       const refreshBtn = document.getElementById("refreshBtn");
       const importBtn = document.getElementById("importBtn");
+      const zipUploadInput = document.getElementById("zipUploadInput");
+      const uploadZipBtn = document.getElementById("uploadZipBtn");
       const trainModelBtn = document.getElementById("trainModelBtn");
       const exportReportBtn = document.getElementById("exportReportBtn");
       const dataStatus = document.getElementById("dataStatus");
@@ -425,6 +429,17 @@
 
       async function postApi(path) {
         const res = await fetch(path, { method: "POST" });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+
+      async function uploadZip(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/import/upload", {
+          method: "POST",
+          body: formData,
+        });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
       }
@@ -853,6 +868,30 @@
           dataStatus.textContent = "导入失败";
           headline.textContent = err.message;
         } finally {
+          importBtn.disabled = false;
+          refreshBtn.disabled = false;
+        }
+      });
+      uploadZipBtn.addEventListener("click", () => {
+        zipUploadInput.value = "";
+        zipUploadInput.click();
+      });
+      zipUploadInput.addEventListener("change", async () => {
+        const file = zipUploadInput.files?.[0];
+        if (!file) return;
+        uploadZipBtn.disabled = true;
+        importBtn.disabled = true;
+        refreshBtn.disabled = true;
+        dataStatus.textContent = `正在上传并导入：${file.name}`;
+        try {
+          const result = await uploadZip(file);
+          dataStatus.textContent = `上传导入完成：Excel ${result.uploaded_excel_files} 个，价格 ${result.price_rows} 条，曲线 ${result.curve_15min_rows} 条`;
+          await init();
+        } catch (err) {
+          dataStatus.textContent = "上传导入失败";
+          headline.textContent = err.message;
+        } finally {
+          uploadZipBtn.disabled = false;
           importBtn.disabled = false;
           refreshBtn.disabled = false;
         }
