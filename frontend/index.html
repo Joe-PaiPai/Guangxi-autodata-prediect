@@ -372,6 +372,13 @@
       <section class="grid" style="margin-top: 12px">
         <div class="panel span-12">
           <h2>每小时报价倾向</h2>
+          <div id="evaluationBox"></div>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
+        <div class="panel span-12">
+          <h2>每小时报价倾向</h2>
           <div id="adviceTable"></div>
         </div>
       </section>
@@ -391,6 +398,8 @@
       const supplyChart = document.getElementById("supplyChart");
       const historyChart = document.getElementById("historyChart");
       const qualityBox = document.getElementById("qualityBox");
+      const evaluationBox = document.getElementById("evaluationBox");
+      evaluationBox.previousElementSibling.textContent = "日前价格模型回测";
       const adviceTable = document.getElementById("adviceTable");
 
       const fmt = (value, digits = 1) =>
@@ -611,6 +620,82 @@
         `;
       }
 
+      function renderEvaluation(evaluation) {
+        const labels = {
+          ensemble: "混合集成",
+          xgboost: "XGBoost",
+          lstm: "LSTM",
+          baseline: "相似小时",
+        };
+        const summaryRows = Object.entries(evaluation.summary || {})
+          .map(([key, item]) => `
+            <tr>
+              <td>${labels[key] || key}</td>
+              <td>${fmt(item.mae)}</td>
+              <td>${fmt(item.rmse)}</td>
+              <td>${item.count || 0}</td>
+            </tr>
+          `)
+          .join("");
+        const dailyRows = (evaluation.daily || [])
+          .map((day) => {
+            const item = day.metrics?.ensemble || {};
+            return `
+              <tr>
+                <td>${day.market_date}</td>
+                <td>${fmt(item.mae)}</td>
+                <td>${fmt(item.rmse)}</td>
+                <td>${fmt(item.high_hit_rate, 0)}%</td>
+                <td>${fmt(item.low_hit_rate, 0)}%</td>
+                <td>${day.components?.lstm || "-"}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        const worstHours = (evaluation.hourly_mae || [])
+          .filter((row) => row.mae !== null && row.mae !== undefined)
+          .sort((a, b) => b.mae - a.mae)
+          .slice(0, 5)
+          .map((row) => `${String(row.hour).padStart(2, "0")}:00 ${fmt(row.mae)} 元/MWh`)
+          .join("，") || "-";
+        evaluationBox.innerHTML = `
+          <div class="grid">
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">回测日期</div>
+              <div class="value">${evaluation.days || 0} 天</div>
+              <div class="sub">${(evaluation.dates || []).join(" / ")}</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">集成 MAE</div>
+              <div class="value">${fmt(evaluation.summary?.ensemble?.mae)}</div>
+              <div class="sub">元/MWh，越低越好</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">集成 RMSE</div>
+              <div class="value">${fmt(evaluation.summary?.ensemble?.rmse)}</div>
+              <div class="sub">对大误差更敏感</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">误差较大时段</div>
+              <div class="value" style="font-size: 15px; line-height: 1.45">${worstHours}</div>
+              <div class="sub">按集成模型小时 MAE 排序</div>
+            </div>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>模型</th><th>MAE</th><th>RMSE</th><th>样本数</th></tr></thead>
+              <tbody>${summaryRows}</tbody>
+            </table>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>日期</th><th>集成 MAE</th><th>集成 RMSE</th><th>高价命中</th><th>低价命中</th><th>LSTM 状态</th></tr></thead>
+              <tbody>${dailyRows}</tbody>
+            </table>
+          </div>
+        `;
+      }
+
       function renderAdvice(rows) {
         if (!rows.length) {
           adviceTable.innerHTML = `<div class="empty">没有可展示的建议</div>`;
@@ -658,11 +743,12 @@
       async function loadDate(marketDate) {
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality] = await Promise.all([
+        const [report, prices, history, quality, evaluation] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
+          api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
         ]);
         const chartRows = prices.some((r) => r.real_time_price !== null)
           ? prices
@@ -680,6 +766,7 @@
         renderSupplyChart(report.supply_series || []);
         renderHistoryChart(history);
         renderQuality(quality);
+        renderEvaluation(evaluation);
         renderAdvice(report.hourly_advice);
         dataStatus.textContent = `已加载 ${marketDate}`;
       }

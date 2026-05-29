@@ -405,18 +405,10 @@ def _clip_price(value: float | None) -> float | None:
     return round(max(0.0, min(1500.0, value)), 3)
 
 
-def predict_day_ahead_prices(conn: sqlite3.Connection, market_date: str) -> dict:
-    actual_count = conn.execute(
-        """
-        SELECT COUNT(*) AS hours
-        FROM spot_price_hourly
-        WHERE market_date = ?
-            AND market_type = 'day_ahead'
-        """,
-        (market_date,),
-    ).fetchone()["hours"]
-    if actual_count >= 24:
-        rows = conn.execute(
+def _actual_day_ahead_prices(conn: sqlite3.Connection, market_date: str) -> dict[int, float]:
+    return {
+        row["hour"]: row["price_yuan_mwh"]
+        for row in conn.execute(
             """
             SELECT hour, price_yuan_mwh
             FROM spot_price_hourly
@@ -426,24 +418,10 @@ def predict_day_ahead_prices(conn: sqlite3.Connection, market_date: str) -> dict
             """,
             (market_date,),
         ).fetchall()
-        return {
-            "market_date": market_date,
-            "source": "actual",
-            "model": "actual_day_ahead",
-            "components": {"actual": "ok"},
-            "rows": [
-                {
-                    "hour": row["hour"],
-                    "predicted_price": row["price_yuan_mwh"],
-                    "xgboost_price": None,
-                    "lstm_price": None,
-                    "baseline_price": None,
-                    "confidence": 1.0,
-                }
-                for row in rows
-            ],
-        }
+    }
 
+
+def _forecast_day_ahead_components(conn: sqlite3.Connection, market_date: str) -> dict:
     xgb_values, xgb_status = _xgboost_predict(conn, market_date)
     lstm_values, lstm_status = _lstm_sequence_predict(conn, market_date)
     rows = []
@@ -484,6 +462,169 @@ def predict_day_ahead_prices(conn: sqlite3.Connection, market_date: str) -> dict
             "baseline": "similar_same_hour",
         },
         "rows": rows,
+    }
+
+
+def predict_day_ahead_prices(conn: sqlite3.Connection, market_date: str, force_forecast: bool = False) -> dict:
+    actual_count = conn.execute(
+        """
+        SELECT COUNT(*) AS hours
+        FROM spot_price_hourly
+        WHERE market_date = ?
+            AND market_type = 'day_ahead'
+        """,
+        (market_date,),
+    ).fetchone()["hours"]
+    if actual_count >= 24 and not force_forecast:
+        prices = _actual_day_ahead_prices(conn, market_date)
+        return {
+            "market_date": market_date,
+            "source": "actual",
+            "model": "actual_day_ahead",
+            "components": {"actual": "ok"},
+            "rows": [
+                {
+                    "hour": hour,
+                    "predicted_price": price,
+                    "xgboost_price": None,
+                    "lstm_price": None,
+                    "baseline_price": None,
+                    "confidence": 1.0,
+                }
+                for hour, price in prices.items()
+            ],
+        }
+    return _forecast_day_ahead_components(conn, market_date)
+
+
+def _metric_values(pairs: list[tuple[float, float]]) -> dict:
+    if not pairs:
+        return {"mae": None, "rmse": None, "count": 0}
+    errors = [predicted - actual for predicted, actual in pairs]
+    abs_errors = [abs(error) for error in errors]
+    sq_errors = [error * error for error in errors]
+    return {
+        "mae": round(mean(abs_errors), 3),
+        "rmse": round(mean(sq_errors) ** 0.5, 3),
+        "count": len(pairs),
+    }
+
+
+def _quantile(values: list[float], ratio: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * ratio)))
+    return ordered[index]
+
+
+def _band_hit_rate(actuals: dict[int, float], predictions: dict[int, float], high: bool) -> float | None:
+    actual_threshold = _quantile(list(actuals.values()), 0.75 if high else 0.25)
+    predicted_threshold = _quantile(list(predictions.values()), 0.75 if high else 0.25)
+    if actual_threshold is None or predicted_threshold is None:
+        return None
+    actual_hours = {
+        hour
+        for hour, value in actuals.items()
+        if (value >= actual_threshold if high else value <= actual_threshold)
+    }
+    predicted_hours = {
+        hour
+        for hour, value in predictions.items()
+        if (value >= predicted_threshold if high else value <= predicted_threshold)
+    }
+    if not actual_hours:
+        return None
+    return round(len(actual_hours & predicted_hours) / len(actual_hours) * 100, 1)
+
+
+def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = None, days: int = 5) -> dict:
+    date_limit = end_date or "9999-12-31"
+    candidates = [
+        row["market_date"]
+        for row in conn.execute(
+            """
+            SELECT market_date
+            FROM spot_price_hourly
+            WHERE market_type = 'day_ahead'
+                AND market_date <= ?
+            GROUP BY market_date
+            HAVING COUNT(*) = 24
+            ORDER BY market_date DESC
+            LIMIT ?
+            """,
+            (date_limit, max(1, min(days, 10))),
+        ).fetchall()
+    ]
+    target_dates = list(reversed(candidates))
+    model_pairs: dict[str, list[tuple[float, float]]] = {
+        "ensemble": [],
+        "xgboost": [],
+        "lstm": [],
+        "baseline": [],
+    }
+    hourly_errors: dict[int, list[float]] = {hour: [] for hour in range(24)}
+    daily_rows = []
+
+    for item_date in target_dates:
+        actuals = _actual_day_ahead_prices(conn, item_date)
+        forecast = _forecast_day_ahead_components(conn, item_date)
+        predictions_by_model: dict[str, dict[int, float]] = {
+            "ensemble": {},
+            "xgboost": {},
+            "lstm": {},
+            "baseline": {},
+        }
+        for row in forecast["rows"]:
+            hour = row["hour"]
+            actual = actuals.get(hour)
+            if actual is None:
+                continue
+            for model_key, field in (
+                ("ensemble", "predicted_price"),
+                ("xgboost", "xgboost_price"),
+                ("lstm", "lstm_price"),
+                ("baseline", "baseline_price"),
+            ):
+                predicted = row.get(field)
+                if predicted is None:
+                    continue
+                predictions_by_model[model_key][hour] = predicted
+                model_pairs[model_key].append((predicted, actual))
+                if model_key == "ensemble":
+                    hourly_errors[hour].append(abs(predicted - actual))
+
+        daily_rows.append(
+            {
+                "market_date": item_date,
+                "components": forecast["components"],
+                "metrics": {
+                    key: {
+                        **_metric_values([(pred, actuals[hour]) for hour, pred in predictions.items()]),
+                        "high_hit_rate": _band_hit_rate(actuals, predictions, high=True),
+                        "low_hit_rate": _band_hit_rate(actuals, predictions, high=False),
+                    }
+                    for key, predictions in predictions_by_model.items()
+                },
+            }
+        )
+
+    return {
+        "end_date": end_date,
+        "days": len(target_dates),
+        "dates": target_dates,
+        "summary": {
+            key: _metric_values(values)
+            for key, values in model_pairs.items()
+        },
+        "hourly_mae": [
+            {
+                "hour": hour,
+                "mae": round(mean(values), 3) if values else None,
+            }
+            for hour, values in hourly_errors.items()
+        ],
+        "daily": daily_rows,
     }
 
 

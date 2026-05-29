@@ -16,7 +16,7 @@ from app.analytics import (
     strategy_report,
 )
 from app.db import get_connection, init_db
-from app.forecasting import REAL_TIME_METHODS, predict_day_ahead_prices
+from app.forecasting import REAL_TIME_METHODS, evaluate_day_ahead_model, predict_day_ahead_prices
 from app.importer import import_raw_data
 
 
@@ -116,6 +116,12 @@ def get_day_ahead_forecast(market_date: str) -> dict:
 @app.get("/api/forecast/real-time-methods")
 def get_real_time_methods() -> dict:
     return REAL_TIME_METHODS
+
+
+@app.get("/api/evaluation/day-ahead")
+def get_day_ahead_evaluation(end_date: str | None = None, days: int = 5) -> dict:
+    with get_connection() as conn:
+        return evaluate_day_ahead_model(conn, end_date=end_date, days=days)
 
 
 @app.get("/")
