@@ -14,6 +14,7 @@ from app.analytics import (
     data_quality,
     history_trend,
     hourly_curves,
+    import_status,
     price_summary,
     strategy_report,
 )
@@ -132,6 +133,12 @@ def health() -> dict:
 def get_dates() -> list[dict]:
     with get_connection() as conn:
         return available_dates(conn)
+
+
+@app.get("/api/import/status")
+def get_import_status() -> dict:
+    with get_connection() as conn:
+        return import_status(conn)
 
 
 @app.post("/api/import")

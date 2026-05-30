@@ -332,6 +332,13 @@
 
       <p class="headline" id="headline">正在生成结论...</p>
 
+      <section class="grid" style="margin-bottom: 12px">
+        <div class="panel span-12">
+          <h2>数据导入记录</h2>
+          <div id="importStatusBox"></div>
+        </div>
+      </section>
+
       <section class="grid" id="metrics"></section>
 
       <section class="grid" style="margin-top: 12px">
@@ -406,6 +413,7 @@
       const exportReportBtn = document.getElementById("exportReportBtn");
       const dataStatus = document.getElementById("dataStatus");
       const headline = document.getElementById("headline");
+      const importStatusBox = document.getElementById("importStatusBox");
       const metrics = document.getElementById("metrics");
       const modelStatusBox = document.getElementById("modelStatusBox");
       const reportList = document.getElementById("reportList");
@@ -457,6 +465,20 @@
           metric("日前最低", `${fmt(summary.day_ahead.min)} 元/MWh`, `小时 ${summary.low_day_ahead_hours[0]?.hour ?? "-"}`),
           metric("价差最大", `${fmt(summary.spread_real_minus_day_ahead.max)} 元/MWh`, "实时溢价"),
         ].join("");
+      }
+
+      function renderImportStatus(status) {
+        const latest = status.latest_import || {};
+        importStatusBox.innerHTML = `
+          <div class="grid">
+            ${metric("最近导入时间", latest.started_at || "-", `文件 ${latest.files_seen ?? 0} 个`)}
+            ${metric("最新日前价格日期", status.latest_day_ahead_date || "-", `价格日期 ${status.price_date_count || 0} 天`)}
+            ${metric("最新实时价格日期", status.latest_real_time_date || "-", "用于复盘分析")}
+            ${metric("最新供需曲线日期", status.latest_curve_date || "-", `曲线日期 ${status.curve_date_count || 0} 天`)}
+            ${metric("价格数据", latest.price_rows ?? 0, "小时价格行")}
+            ${metric("曲线数据", latest.curve_15min_rows ?? 0, "15分钟点")}
+          </div>
+        `;
       }
 
       function renderReportList(report) {
@@ -786,13 +808,14 @@
       async function loadDate(marketDate) {
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality, evaluation, modelStatus] = await Promise.all([
+        const [report, prices, history, quality, evaluation, modelStatus, importStatus] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
           api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
           api(`/api/models/status`),
+          api(`/api/import/status`),
         ]);
         const chartRows = prices.some((r) => r.real_time_price !== null)
           ? prices
@@ -804,6 +827,7 @@
             }));
         headline.innerHTML = `${report.headline}<span class="mode-pill">${report.mode === "target_day" ? "目标日" : "复盘"}</span>`;
         renderMetrics(report.summary);
+        renderImportStatus(importStatus);
         renderModelStatus(modelStatus);
         renderReportList(report);
         renderPriceChart(chartRows);

@@ -37,6 +37,49 @@ def available_dates(conn: sqlite3.Connection) -> list[dict]:
     return rows_to_dicts(rows)
 
 
+def import_status(conn: sqlite3.Connection) -> dict:
+    latest_run = conn.execute(
+        """
+        SELECT
+            started_at,
+            raw_root,
+            files_seen,
+            price_rows,
+            curve_15min_rows,
+            curve_hourly_rows,
+            notes
+        FROM import_runs
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    price_dates = conn.execute(
+        """
+        SELECT
+            MAX(CASE WHEN market_type = 'day_ahead' THEN market_date END) AS latest_day_ahead_date,
+            MAX(CASE WHEN market_type = 'real_time' THEN market_date END) AS latest_real_time_date,
+            COUNT(DISTINCT market_date) AS price_date_count
+        FROM spot_price_hourly
+        """
+    ).fetchone()
+    curve_dates = conn.execute(
+        """
+        SELECT
+            MAX(market_date) AS latest_curve_date,
+            COUNT(DISTINCT market_date) AS curve_date_count
+        FROM power_curve_hourly
+        """
+    ).fetchone()
+    return {
+        "latest_import": dict(latest_run) if latest_run else None,
+        "latest_day_ahead_date": price_dates["latest_day_ahead_date"] if price_dates else None,
+        "latest_real_time_date": price_dates["latest_real_time_date"] if price_dates else None,
+        "latest_curve_date": curve_dates["latest_curve_date"] if curve_dates else None,
+        "price_date_count": price_dates["price_date_count"] if price_dates else 0,
+        "curve_date_count": curve_dates["curve_date_count"] if curve_dates else 0,
+    }
+
+
 def daily_prices(
     conn: sqlite3.Connection,
     market_date: str,
