@@ -402,6 +402,26 @@
       </section>
 
       <section class="grid" style="margin-top: 12px">
+        <div class="panel span-8">
+          <h2>预测价格与实际价格对比</h2>
+          <div id="predictionMetricsBox"></div>
+          <div class="legend" style="flex-wrap: wrap; margin-top: 12px">
+            <span>实际日前价格</span>
+            <span class="rt">混合集成预测</span>
+            <span style="color: #b45309">XGBoost</span>
+            <span style="color: #7c3aed">LSTM</span>
+            <span style="color: #657085">相似小时基线</span>
+          </div>
+          <svg id="predictionChart" viewBox="0 0 900 320" role="img"></svg>
+        </div>
+        <div class="panel span-4">
+          <h2>预测误差</h2>
+          <p class="muted" style="margin-top: -4px">混合集成预测 - 实际日前价格</p>
+          <svg id="predictionErrorChart" viewBox="0 0 420 320" role="img"></svg>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 12px">
         <div class="panel span-12">
           <h2>每小时报价倾向</h2>
           <div id="adviceTable"></div>
@@ -432,6 +452,9 @@
       const qualityBox = document.getElementById("qualityBox");
       const evaluationBox = document.getElementById("evaluationBox");
       evaluationBox.previousElementSibling.textContent = "日前价格模型回测";
+      const predictionMetricsBox = document.getElementById("predictionMetricsBox");
+      const predictionChart = document.getElementById("predictionChart");
+      const predictionErrorChart = document.getElementById("predictionErrorChart");
       const adviceTable = document.getElementById("adviceTable");
 
       const fmt = (value, digits = 1) =>
@@ -441,6 +464,14 @@
         const res = await fetch(path);
         if (!res.ok) throw new Error(await res.text());
         return res.json();
+      }
+
+      async function apiOrNull(path) {
+        try {
+          return await api(path);
+        } catch (err) {
+          return null;
+        }
       }
 
       async function postApi(path) {
@@ -835,6 +866,107 @@
         `;
       }
 
+      function renderPredictionComparison(comparison) {
+        if (!comparison || !(comparison.rows || []).length) {
+          predictionMetricsBox.innerHTML = `<div class="empty">该日暂无完整实际日前价格，无法做预测-实际对比</div>`;
+          predictionChart.innerHTML = `<text x="40" y="80" font-size="14" fill="#657085">暂无可对比数据</text>`;
+          predictionErrorChart.innerHTML = `<text x="30" y="80" font-size="14" fill="#657085">暂无误差数据</text>`;
+          return;
+        }
+
+        const labels = {
+          ensemble: "混合集成",
+          xgboost: "XGBoost",
+          lstm: "LSTM",
+          baseline: "相似小时",
+        };
+        const metricsHtml = Object.entries(comparison.metrics || {})
+          .map(([key, item]) => `
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">${labels[key] || key}</div>
+              <div class="value">${fmt(item.mae)} MAE</div>
+              <div class="sub">RMSE ${fmt(item.rmse)}，样本 ${item.count || 0}</div>
+            </div>
+          `)
+          .join("");
+        predictionMetricsBox.innerHTML = `<div class="grid">${metricsHtml}</div>`;
+
+        const rows = comparison.rows;
+        const width = 900;
+        const height = 320;
+        const left = 46;
+        const right = 18;
+        const top = 18;
+        const bottom = 38;
+        const series = [
+          ["actual_price", "#172033", 3],
+          ["ensemble_price", "#1f6feb", 3],
+          ["xgboost_price", "#b45309", 2],
+          ["lstm_price", "#7c3aed", 2],
+          ["baseline_price", "#657085", 2],
+        ];
+        const values = rows
+          .flatMap((row) => series.map(([field]) => row[field]))
+          .filter((value) => value !== null && value !== undefined);
+        if (!values.length) {
+          predictionChart.innerHTML = `<text x="40" y="80" font-size="14" fill="#657085">暂无可对比数据</text>`;
+          return;
+        }
+        const y = scale(values, top, height - bottom);
+        const x = (hour) => left + (hour / 23) * (width - left - right);
+        const line = (field) =>
+          rows
+            .filter((row) => row[field] !== null && row[field] !== undefined)
+            .map((row, i) => `${i === 0 ? "M" : "L"} ${x(row.hour).toFixed(2)} ${y(row[field]).toFixed(2)}`)
+            .join(" ");
+        const grid = [0, 1, 2, 3, 4]
+          .map((i) => {
+            const yy = top + i * ((height - top - bottom) / 4);
+            return `<line class="grid-line" x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}"></line>`;
+          })
+          .join("");
+        const paths = series
+          .map(([field, color, strokeWidth]) => `<path d="${line(field)}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"></path>`)
+          .join("");
+        const labelsX = [0, 6, 12, 18, 23]
+          .map((h) => `<text x="${x(h)}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#657085">${h}:00</text>`)
+          .join("");
+        predictionChart.innerHTML = `
+          ${grid}
+          <line class="axis" x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}"></line>
+          <line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${height - bottom}"></line>
+          ${paths}
+          ${labelsX}
+        `;
+
+        const errorWidth = 420;
+        const errorHeight = 320;
+        const errorLeft = 34;
+        const errorTop = 18;
+        const errorBottom = 38;
+        const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.ensemble_error || 0)));
+        const zeroY = errorTop + (errorHeight - errorTop - errorBottom) / 2;
+        const barW = (errorWidth - errorLeft - 12) / 24 - 2;
+        const bars = rows
+          .map((row) => {
+            const error = row.ensemble_error || 0;
+            const barH = Math.abs(error) / maxAbs * ((errorHeight - errorTop - errorBottom) / 2);
+            const barX = errorLeft + row.hour * (barW + 2);
+            const barY = error >= 0 ? zeroY - barH : zeroY;
+            const klass = error >= 0 ? "bar-positive" : "bar-negative";
+            return `<rect class="${klass}" x="${barX}" y="${barY}" width="${barW}" height="${barH}"></rect>`;
+          })
+          .join("");
+        const errorLabels = [0, 6, 12, 18, 23]
+          .map((h) => `<text x="${errorLeft + h * (barW + 2) + barW / 2}" y="${errorHeight - 10}" text-anchor="middle" font-size="11" fill="#657085">${h}</text>`)
+          .join("");
+        predictionErrorChart.innerHTML = `
+          <line class="grid-line" x1="${errorLeft}" y1="${zeroY}" x2="${errorWidth - 8}" y2="${zeroY}"></line>
+          ${bars}
+          ${errorLabels}
+        `;
+      }
+
       function renderAdvice(rows) {
         if (!rows.length) {
           adviceTable.innerHTML = `<div class="empty">没有可展示的建议</div>`;
@@ -882,12 +1014,13 @@
       async function loadDate(marketDate) {
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality, evaluation, modelStatus, importStatus, diagnostics] = await Promise.all([
+        const [report, prices, history, quality, evaluation, predictionComparison, modelStatus, importStatus, diagnostics] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
           api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
+          apiOrNull(`/api/evaluation/day-ahead/${marketDate}`),
           api(`/api/models/status`),
           api(`/api/import/status`),
           api(`/api/quality/diagnostics?limit=20`),
@@ -912,6 +1045,7 @@
         renderHistoryChart(history);
         renderQuality(quality);
         renderEvaluation(evaluation);
+        renderPredictionComparison(predictionComparison);
         renderAdvice(report.hourly_advice);
         dataStatus.textContent = `已加载 ${marketDate}`;
       }

@@ -203,10 +203,14 @@ def _training_frame(conn: sqlite3.Connection, market_date: str, market_type: str
     return pd.DataFrame(rows)
 
 
-def _xgboost_predict(conn: sqlite3.Connection, market_date: str) -> tuple[list[float | None], str]:
+def _xgboost_predict(
+    conn: sqlite3.Connection,
+    market_date: str,
+    use_saved_model: bool = True,
+) -> tuple[list[float | None], str]:
     if XGBRegressor is None:
         return [None] * 24, "xgboost_missing"
-    if XGBOOST_MODEL_PATH.exists():
+    if use_saved_model and XGBOOST_MODEL_PATH.exists():
         try:
             model = joblib.load(XGBOOST_MODEL_PATH)
             x_target = pd.DataFrame([_feature_row(conn, market_date, hour) for hour in range(24)])[FEATURE_COLUMNS]
@@ -374,11 +378,15 @@ def _target_lstm_sequences(
     return sequences
 
 
-def _lstm_sequence_predict(conn: sqlite3.Connection, market_date: str) -> tuple[list[float | None], str]:
+def _lstm_sequence_predict(
+    conn: sqlite3.Connection,
+    market_date: str,
+    use_saved_model: bool = True,
+) -> tuple[list[float | None], str]:
     if torch is None or DayAheadLSTM is None:
         return _sequence_fallback_predict(conn, market_date)
 
-    if LSTM_MODEL_PATH.exists():
+    if use_saved_model and LSTM_MODEL_PATH.exists():
         try:
             payload = torch.load(LSTM_MODEL_PATH, map_location="cpu")
             model = DayAheadLSTM(input_size=4, hidden_size=32)
@@ -462,9 +470,13 @@ def _actual_day_ahead_prices(conn: sqlite3.Connection, market_date: str) -> dict
     }
 
 
-def _forecast_day_ahead_components(conn: sqlite3.Connection, market_date: str) -> dict:
-    xgb_values, xgb_status = _xgboost_predict(conn, market_date)
-    lstm_values, lstm_status = _lstm_sequence_predict(conn, market_date)
+def _forecast_day_ahead_components(
+    conn: sqlite3.Connection,
+    market_date: str,
+    use_saved_model: bool = True,
+) -> dict:
+    xgb_values, xgb_status = _xgboost_predict(conn, market_date, use_saved_model=use_saved_model)
+    lstm_values, lstm_status = _lstm_sequence_predict(conn, market_date, use_saved_model=use_saved_model)
     rows = []
     for hour in range(24):
         baseline = _similar_baseline(conn, market_date, hour)
@@ -713,7 +725,7 @@ def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = No
 
     for item_date in target_dates:
         actuals = _actual_day_ahead_prices(conn, item_date)
-        forecast = _forecast_day_ahead_components(conn, item_date)
+        forecast = _forecast_day_ahead_components(conn, item_date, use_saved_model=False)
         predictions_by_model: dict[str, dict[int, float]] = {
             "ensemble": {},
             "xgboost": {},
@@ -770,6 +782,58 @@ def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = No
             for hour, values in hourly_errors.items()
         ],
         "daily": daily_rows,
+    }
+
+
+def day_ahead_prediction_comparison(conn: sqlite3.Connection, market_date: str) -> dict:
+    actuals = _actual_day_ahead_prices(conn, market_date)
+    if len(actuals) < 24:
+        raise ValueError("Selected date does not have complete actual day-ahead prices.")
+
+    forecast = _forecast_day_ahead_components(conn, market_date, use_saved_model=False)
+    rows = []
+    pairs: dict[str, list[tuple[float, float]]] = {
+        "ensemble": [],
+        "xgboost": [],
+        "lstm": [],
+        "baseline": [],
+    }
+    for item in forecast["rows"]:
+        hour = item["hour"]
+        actual = actuals.get(hour)
+        ensemble = item.get("predicted_price")
+        xgboost = item.get("xgboost_price")
+        lstm = item.get("lstm_price")
+        baseline = item.get("baseline_price")
+        row = {
+            "hour": hour,
+            "time_label": f"{hour:02d}:00",
+            "actual_price": _clip_price(actual),
+            "ensemble_price": ensemble,
+            "xgboost_price": xgboost,
+            "lstm_price": lstm,
+            "baseline_price": baseline,
+            "ensemble_error": round(ensemble - actual, 3) if ensemble is not None else None,
+            "xgboost_error": round(xgboost - actual, 3) if xgboost is not None else None,
+            "lstm_error": round(lstm - actual, 3) if lstm is not None else None,
+            "baseline_error": round(baseline - actual, 3) if baseline is not None else None,
+        }
+        rows.append(row)
+        for key, value in (
+            ("ensemble", ensemble),
+            ("xgboost", xgboost),
+            ("lstm", lstm),
+            ("baseline", baseline),
+        ):
+            if value is not None:
+                pairs[key].append((value, actual))
+
+    return {
+        "market_date": market_date,
+        "model": forecast["model"],
+        "components": forecast["components"],
+        "metrics": {key: _metric_values(values) for key, values in pairs.items()},
+        "rows": rows,
     }
 
 
