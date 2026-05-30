@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Guangxi Power Trading Assistant auto update every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=guangxi-power-update.service
+
+[Install]
+WantedBy=timers.target

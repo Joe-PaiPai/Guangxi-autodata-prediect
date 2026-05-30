@@ -1,0 +1,8 @@
+[Unit]
+Description=Auto update Guangxi Power Trading Assistant from GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/admin/Guangxi-autodata-prediect/scripts/server_auto_update.sh
