@@ -12,6 +12,7 @@ from app.analytics import (
     available_dates,
     daily_prices,
     data_quality,
+    data_quality_diagnostics,
     history_trend,
     hourly_curves,
     import_status,
@@ -177,6 +178,12 @@ def get_summary(market_date: str) -> dict:
 def get_history(market_date: str, days: int = 14) -> list[dict]:
     with get_connection() as conn:
         return history_trend(conn, market_date, days=days)
+
+
+@app.get("/api/quality/diagnostics")
+def get_quality_diagnostics(limit: int = 20) -> dict:
+    with get_connection() as conn:
+        return data_quality_diagnostics(conn, limit=max(1, min(limit, 90)))
 
 
 @app.get("/api/quality/{market_date}")

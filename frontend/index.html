@@ -339,6 +339,13 @@
         </div>
       </section>
 
+      <section class="grid" style="margin-bottom: 12px">
+        <div class="panel span-12">
+          <h2>数据质量诊断</h2>
+          <div id="qualityDiagnosticsBox"></div>
+        </div>
+      </section>
+
       <section class="grid" id="metrics"></section>
 
       <section class="grid" style="margin-top: 12px">
@@ -414,6 +421,7 @@
       const dataStatus = document.getElementById("dataStatus");
       const headline = document.getElementById("headline");
       const importStatusBox = document.getElementById("importStatusBox");
+      const qualityDiagnosticsBox = document.getElementById("qualityDiagnosticsBox");
       const metrics = document.getElementById("metrics");
       const modelStatusBox = document.getElementById("modelStatusBox");
       const reportList = document.getElementById("reportList");
@@ -477,6 +485,72 @@
             ${metric("最新供需曲线日期", status.latest_curve_date || "-", `曲线日期 ${status.curve_date_count || 0} 天`)}
             ${metric("价格数据", latest.price_rows ?? 0, "小时价格行")}
             ${metric("曲线数据", latest.curve_15min_rows ?? 0, "15分钟点")}
+          </div>
+        `;
+      }
+
+      function hoursText(hours) {
+        if (!hours || !hours.length) return "-";
+        if (hours.length === 24) return "全天";
+        return hours.slice(0, 8).map((h) => `${String(h).padStart(2, "0")}:00`).join("、") + (hours.length > 8 ? " 等" : "");
+      }
+
+      function renderQualityDiagnostics(diagnostics) {
+        const range = diagnostics.date_range || {};
+        const missingPrice = diagnostics.missing_price || [];
+        const missingCurves = diagnostics.missing_curves || [];
+        const anomalies = diagnostics.anomalies || [];
+        const issueCount = missingPrice.length + missingCurves.length + anomalies.length;
+        const priceRows = missingPrice.slice(0, 10).map((item) => `
+          <tr>
+            <td>${item.market_date}</td>
+            <td>${item.item}</td>
+            <td>${item.missing_count}/24</td>
+            <td>${hoursText(item.missing_hours)}</td>
+          </tr>
+        `).join("");
+        const curveRows = missingCurves.slice(0, 12).map((item) => `
+          <tr>
+            <td>${item.market_date}</td>
+            <td>${item.item}</td>
+            <td>${item.missing_count}/24</td>
+            <td>${hoursText(item.missing_hours)}</td>
+          </tr>
+        `).join("");
+        const anomalyRows = anomalies.slice(0, 8).map((item) => `
+          <tr>
+            <td>${item.market_date}</td>
+            <td>${item.market_type}</td>
+            <td>${String(item.hour).padStart(2, "0")}:00</td>
+            <td>${fmt(item.value)}</td>
+          </tr>
+        `).join("");
+        qualityDiagnosticsBox.innerHTML = `
+          <div class="grid">
+            ${metric("诊断范围", range.end ? `${range.start} 至 ${range.end}` : "-", `最近 ${range.days || 0} 天`)}
+            ${metric("价格缺失项", missingPrice.length, "日前/实时小时缺失")}
+            ${metric("曲线缺失项", missingCurves.length, "负荷/新能源/水电/联络线等")}
+            ${metric("异常价格", anomalies.length, "小于0或大于1500")}
+            ${metric("诊断结论", issueCount ? "需核查" : "正常", issueCount ? "建议先补数据再训练" : "可用于分析")}
+            ${metric("显示上限", "最近20天", "避免页面过慢")}
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>日期</th><th>价格项</th><th>缺失</th><th>缺失小时</th></tr></thead>
+              <tbody>${priceRows || `<tr><td colspan="4">最近范围内价格小时完整</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>日期</th><th>曲线项</th><th>缺失</th><th>缺失小时</th></tr></thead>
+              <tbody>${curveRows || `<tr><td colspan="4">最近范围内关键曲线完整</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>日期</th><th>类型</th><th>小时</th><th>价格</th></tr></thead>
+              <tbody>${anomalyRows || `<tr><td colspan="4">未发现极端异常价格</td></tr>`}</tbody>
+            </table>
           </div>
         `;
       }
@@ -808,7 +882,7 @@
       async function loadDate(marketDate) {
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality, evaluation, modelStatus, importStatus] = await Promise.all([
+        const [report, prices, history, quality, evaluation, modelStatus, importStatus, diagnostics] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
@@ -816,6 +890,7 @@
           api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
           api(`/api/models/status`),
           api(`/api/import/status`),
+          api(`/api/quality/diagnostics?limit=20`),
         ]);
         const chartRows = prices.some((r) => r.real_time_price !== null)
           ? prices
@@ -828,6 +903,7 @@
         headline.innerHTML = `${report.headline}<span class="mode-pill">${report.mode === "target_day" ? "目标日" : "复盘"}</span>`;
         renderMetrics(report.summary);
         renderImportStatus(importStatus);
+        renderQualityDiagnostics(diagnostics);
         renderModelStatus(modelStatus);
         renderReportList(report);
         renderPriceChart(chartRows);

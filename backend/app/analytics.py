@@ -80,6 +80,125 @@ def import_status(conn: sqlite3.Connection) -> dict:
     }
 
 
+def data_quality_diagnostics(conn: sqlite3.Connection, limit: int = 20) -> dict:
+    expected_curve_types = [
+        "load_forecast",
+        "renewable_forecast",
+        "hydro_forecast",
+        "intertie_plan",
+        "non_market_generation_forecast",
+        "reserve_positive",
+        "reserve_negative",
+    ]
+    date_rows = rows_to_dicts(
+        conn.execute(
+            """
+            WITH dates AS (
+                SELECT market_date FROM spot_price_hourly
+                UNION
+                SELECT market_date FROM power_curve_hourly
+            )
+            SELECT market_date
+            FROM dates
+            ORDER BY market_date DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    )
+    dates = [row["market_date"] for row in date_rows]
+    if not dates:
+        return {
+            "date_range": {"start": None, "end": None, "days": 0},
+            "missing_price": [],
+            "missing_curves": [],
+            "anomalies": [],
+        }
+
+    placeholders = ",".join("?" for _ in dates)
+    price_rows = rows_to_dicts(
+        conn.execute(
+            f"""
+            SELECT market_date, market_type, hour
+            FROM spot_price_hourly
+            WHERE market_date IN ({placeholders})
+            """,
+            dates,
+        ).fetchall()
+    )
+    price_map: dict[tuple[str, str], set[int]] = {}
+    for row in price_rows:
+        price_map.setdefault((row["market_date"], row["market_type"]), set()).add(row["hour"])
+
+    curve_rows = rows_to_dicts(
+        conn.execute(
+            f"""
+            SELECT market_date, data_type, hour
+            FROM power_curve_hourly
+            WHERE market_date IN ({placeholders})
+                AND region = '骞胯タ'
+                AND data_type IN ({",".join("?" for _ in expected_curve_types)})
+            """,
+            [*dates, *expected_curve_types],
+        ).fetchall()
+    )
+    curve_map: dict[tuple[str, str], set[int]] = {}
+    for row in curve_rows:
+        curve_map.setdefault((row["market_date"], row["data_type"]), set()).add(row["hour"])
+
+    all_hours = set(range(24))
+    missing_price = []
+    missing_curves = []
+    for market_date in dates:
+        for market_type, label in (("day_ahead", "日前价格"), ("real_time", "实时价格")):
+            missing = sorted(all_hours - price_map.get((market_date, market_type), set()))
+            if missing:
+                missing_price.append(
+                    {
+                        "market_date": market_date,
+                        "item": label,
+                        "missing_hours": missing,
+                        "missing_count": len(missing),
+                    }
+                )
+        for data_type in expected_curve_types:
+            missing = sorted(all_hours - curve_map.get((market_date, data_type), set()))
+            if missing:
+                missing_curves.append(
+                    {
+                        "market_date": market_date,
+                        "item": data_type,
+                        "missing_hours": missing,
+                        "missing_count": len(missing),
+                    }
+                )
+
+    anomalies = rows_to_dicts(
+        conn.execute(
+            f"""
+            SELECT
+                market_date,
+                market_type,
+                hour,
+                ROUND(price_yuan_mwh, 3) AS value,
+                source_file
+            FROM spot_price_hourly
+            WHERE market_date IN ({placeholders})
+                AND (price_yuan_mwh < 0 OR price_yuan_mwh > 1500)
+            ORDER BY market_date DESC, hour
+            LIMIT 50
+            """,
+            dates,
+        ).fetchall()
+    )
+    return {
+        "date_range": {"start": min(dates), "end": max(dates), "days": len(dates)},
+        "missing_price": missing_price[:50],
+        "missing_curves": missing_curves[:80],
+        "anomalies": anomalies,
+    }
+
+
 def daily_prices(
     conn: sqlite3.Connection,
     market_date: str,
