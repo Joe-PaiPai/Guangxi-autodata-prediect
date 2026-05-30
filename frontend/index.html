@@ -828,6 +828,58 @@
           .slice(0, 5)
           .map((row) => `${String(row.hour).padStart(2, "0")}:00 ${fmt(row.mae)} 元/MWh`)
           .join("，") || "-";
+        const avgRate = (field) => {
+          const values = (evaluation.daily || [])
+            .map((day) => day.metrics?.ensemble?.[field])
+            .filter((value) => value !== null && value !== undefined);
+          return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+        };
+        const avgHighHit = avgRate("high_hit_rate");
+        const avgLowHit = avgRate("low_hit_rate");
+        const periods = (evaluation.period_mae || []).filter((row) => row.metrics?.ensemble?.mae !== null && row.metrics?.ensemble?.mae !== undefined);
+        const sortedPeriods = [...periods].sort((a, b) => (b.metrics?.ensemble?.mae || 0) - (a.metrics?.ensemble?.mae || 0));
+        const worstPeriod = sortedPeriods[0];
+        const bestPeriod = sortedPeriods[sortedPeriods.length - 1];
+        const periodRows = (evaluation.period_mae || [])
+          .map((period) => {
+            const item = period.metrics || {};
+            return `
+              <tr>
+                <td>${period.label}<br><span class="muted">${period.hours}</span></td>
+                <td>${fmt(item.ensemble?.mae)}</td>
+                <td>${fmt(item.xgboost?.mae)}</td>
+                <td>${fmt(item.lstm?.mae)}</td>
+                <td>${fmt(item.baseline?.mae)}</td>
+                <td>${item.ensemble?.count || 0}</td>
+              </tr>
+            `;
+          })
+          .join("");
+        const dailyTrendRows = (evaluation.daily || [])
+          .map((day) => {
+            const ensemble = day.metrics?.ensemble || {};
+            const xgboost = day.metrics?.xgboost || {};
+            const lstm = day.metrics?.lstm || {};
+            const baseline = day.metrics?.baseline || {};
+            const modelScores = [
+              ["混合集成", ensemble.mae],
+              ["XGBoost", xgboost.mae],
+              ["LSTM", lstm.mae],
+              ["相似小时", baseline.mae],
+            ].filter(([, value]) => value !== null && value !== undefined);
+            const bestModel = modelScores.sort((a, b) => a[1] - b[1])[0]?.[0] || "-";
+            return `
+              <tr>
+                <td>${day.market_date}</td>
+                <td>${fmt(ensemble.mae)}</td>
+                <td>${fmt(xgboost.mae)}</td>
+                <td>${fmt(lstm.mae)}</td>
+                <td>${fmt(baseline.mae)}</td>
+                <td>${bestModel}</td>
+              </tr>
+            `;
+          })
+          .join("");
         evaluationBox.innerHTML = `
           <div class="grid">
             <div class="metric" style="grid-column: span 3">
@@ -850,6 +902,26 @@
               <div class="value" style="font-size: 15px; line-height: 1.45">${worstHours}</div>
               <div class="sub">按集成模型小时 MAE 排序</div>
             </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">最不稳定时段</div>
+              <div class="value" style="font-size: 18px">${worstPeriod ? worstPeriod.label : "-"}</div>
+              <div class="sub">MAE ${fmt(worstPeriod?.metrics?.ensemble?.mae)} 元/MWh</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">最稳定时段</div>
+              <div class="value" style="font-size: 18px">${bestPeriod ? bestPeriod.label : "-"}</div>
+              <div class="sub">MAE ${fmt(bestPeriod?.metrics?.ensemble?.mae)} 元/MWh</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">高价命中率</div>
+              <div class="value">${fmt(avgHighHit, 0)}%</div>
+              <div class="sub">最近回测日平均</div>
+            </div>
+            <div class="metric" style="grid-column: span 3">
+              <div class="label">低价命中率</div>
+              <div class="value">${fmt(avgLowHit, 0)}%</div>
+              <div class="sub">用于判断低价窗口</div>
+            </div>
           </div>
           <div style="margin-top: 12px">
             <table>
@@ -859,8 +931,20 @@
           </div>
           <div style="margin-top: 12px">
             <table>
+              <thead><tr><th>时段</th><th>集成 MAE</th><th>XGBoost MAE</th><th>LSTM MAE</th><th>基线 MAE</th><th>样本数</th></tr></thead>
+              <tbody>${periodRows}</tbody>
+            </table>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
               <thead><tr><th>日期</th><th>集成 MAE</th><th>集成 RMSE</th><th>高价命中</th><th>低价命中</th><th>LSTM 状态</th></tr></thead>
               <tbody>${dailyRows}</tbody>
+            </table>
+          </div>
+          <div style="margin-top: 12px">
+            <table>
+              <thead><tr><th>日期</th><th>集成</th><th>XGBoost</th><th>LSTM</th><th>相似小时</th><th>当日最优</th></tr></thead>
+              <tbody>${dailyTrendRows}</tbody>
             </table>
           </div>
         `;
@@ -1019,7 +1103,7 @@
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
-          api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
+          api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=7`),
           apiOrNull(`/api/evaluation/day-ahead/${marketDate}`),
           api(`/api/models/status`),
           api(`/api/import/status`),

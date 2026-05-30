@@ -721,6 +721,26 @@ def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = No
         "baseline": [],
     }
     hourly_errors: dict[int, list[float]] = {hour: [] for hour in range(24)}
+    periods = [
+        ("night", "夜间 0-6点", range(0, 7)),
+        ("morning", "上午 7-11点", range(7, 12)),
+        ("afternoon", "午后 12-17点", range(12, 18)),
+        ("evening", "晚高峰 18-23点", range(18, 24)),
+    ]
+    period_by_hour = {
+        hour: key
+        for key, _label, hours in periods
+        for hour in hours
+    }
+    period_pairs: dict[str, dict[str, list[tuple[float, float]]]] = {
+        key: {
+            "ensemble": [],
+            "xgboost": [],
+            "lstm": [],
+            "baseline": [],
+        }
+        for key, _label, _hours in periods
+    }
     daily_rows = []
 
     for item_date in target_dates:
@@ -748,6 +768,9 @@ def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = No
                     continue
                 predictions_by_model[model_key][hour] = predicted
                 model_pairs[model_key].append((predicted, actual))
+                period_key = period_by_hour.get(hour)
+                if period_key:
+                    period_pairs[period_key][model_key].append((predicted, actual))
                 if model_key == "ensemble":
                     hourly_errors[hour].append(abs(predicted - actual))
 
@@ -780,6 +803,18 @@ def evaluate_day_ahead_model(conn: sqlite3.Connection, end_date: str | None = No
                 "mae": round(mean(values), 3) if values else None,
             }
             for hour, values in hourly_errors.items()
+        ],
+        "period_mae": [
+            {
+                "key": key,
+                "label": label,
+                "hours": f"{min(hours):02d}:00-{max(hours):02d}:00",
+                "metrics": {
+                    model_key: _metric_values(values)
+                    for model_key, values in period_pairs[key].items()
+                },
+            }
+            for key, label, hours in periods
         ],
         "daily": daily_rows,
     }
