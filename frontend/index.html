@@ -396,7 +396,13 @@
 
       <section class="grid" style="margin-top: 12px">
         <div class="panel span-12">
-          <h2>每小时报价倾向</h2>
+          <h2>日前价格模型回测</h2>
+          <div class="toolbar" style="padding: 0; background: transparent; margin-bottom: 12px">
+            <div>
+              <button id="runEvaluationBtn">运行最近7天回测</button>
+            </div>
+            <div class="muted">点击后才计算多日准确率和分时段误差</div>
+          </div>
           <div id="evaluationBox"></div>
         </div>
       </section>
@@ -451,7 +457,7 @@
       const historyChart = document.getElementById("historyChart");
       const qualityBox = document.getElementById("qualityBox");
       const evaluationBox = document.getElementById("evaluationBox");
-      evaluationBox.previousElementSibling.textContent = "日前价格模型回测";
+      const runEvaluationBtn = document.getElementById("runEvaluationBtn");
       const predictionMetricsBox = document.getElementById("predictionMetricsBox");
       const predictionChart = document.getElementById("predictionChart");
       const predictionErrorChart = document.getElementById("predictionErrorChart");
@@ -1100,7 +1106,7 @@
         const loadId = ++activeLoadId;
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        evaluationBox.innerHTML = `<div class="empty">模型回测正在后台计算，主页面会先加载</div>`;
+        evaluationBox.innerHTML = `<div class="empty">点击“运行最近7天回测”后，系统会分析多日准确率和分时段误差。</div>`;
         renderPredictionComparison(null);
         const [report, prices, history, quality, modelStatus, importStatus, diagnostics] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
@@ -1133,14 +1139,14 @@
         renderQuality(quality);
         renderAdvice(report.hourly_advice);
         dataStatus.textContent = `已加载 ${marketDate}`;
-        loadModelReview(marketDate, loadId);
       }
 
       async function loadModelReview(marketDate, loadId) {
-        evaluationBox.innerHTML = `<div class="empty">正在计算最近 3 天模型回测...</div>`;
+        runEvaluationBtn.disabled = true;
+        evaluationBox.innerHTML = `<div class="empty">正在计算最近 7 天模型回测...</div>`;
         try {
           const [evaluation, predictionComparison] = await Promise.all([
-            api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
+            api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=7`),
             apiOrNull(`/api/evaluation/day-ahead/${marketDate}`),
           ]);
           if (loadId !== activeLoadId) return;
@@ -1150,6 +1156,10 @@
           if (loadId !== activeLoadId) return;
           evaluationBox.innerHTML = `<div class="empty">模型回测加载较慢或失败，不影响主分析。可稍后刷新重试。</div>`;
           renderPredictionComparison(null);
+        } finally {
+          if (loadId === activeLoadId) {
+            runEvaluationBtn.disabled = false;
+          }
         }
       }
 
@@ -1171,6 +1181,7 @@
       dateSelect.addEventListener("change", () => loadDate(dateSelect.value));
       rtMethodSelect.addEventListener("change", () => loadDate(dateSelect.value));
       refreshBtn.addEventListener("click", () => loadDate(dateSelect.value));
+      runEvaluationBtn.addEventListener("click", () => loadModelReview(dateSelect.value, activeLoadId));
       exportReportBtn.addEventListener("click", () => {
         const rtMethod = rtMethodSelect.value || "spread_follow";
         const url = `/api/export/report/${dateSelect.value}?real_time_method=${rtMethod}`;
