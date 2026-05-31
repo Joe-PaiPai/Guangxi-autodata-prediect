@@ -456,6 +456,7 @@
       const predictionChart = document.getElementById("predictionChart");
       const predictionErrorChart = document.getElementById("predictionErrorChart");
       const adviceTable = document.getElementById("adviceTable");
+      let activeLoadId = 0;
 
       const fmt = (value, digits = 1) =>
         value === null || value === undefined ? "-" : Number(value).toFixed(digits);
@@ -1096,19 +1097,21 @@
       }
 
       async function loadDate(marketDate) {
+        const loadId = ++activeLoadId;
         dataStatus.textContent = "正在生成分析...";
         const rtMethod = rtMethodSelect.value || "spread_follow";
-        const [report, prices, history, quality, evaluation, predictionComparison, modelStatus, importStatus, diagnostics] = await Promise.all([
+        evaluationBox.innerHTML = `<div class="empty">模型回测正在后台计算，主页面会先加载</div>`;
+        renderPredictionComparison(null);
+        const [report, prices, history, quality, modelStatus, importStatus, diagnostics] = await Promise.all([
           api(`/api/report/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/prices/${marketDate}?real_time_method=${rtMethod}`),
           api(`/api/history/${marketDate}?days=14`),
           api(`/api/quality/${marketDate}`),
-          api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=7`),
-          apiOrNull(`/api/evaluation/day-ahead/${marketDate}`),
           api(`/api/models/status`),
           api(`/api/import/status`),
           api(`/api/quality/diagnostics?limit=20`),
         ]);
+        if (loadId !== activeLoadId) return;
         const chartRows = prices.some((r) => r.real_time_price !== null)
           ? prices
           : report.hourly_advice.map((r) => ({
@@ -1128,10 +1131,26 @@
         renderSupplyChart(report.supply_series || []);
         renderHistoryChart(history);
         renderQuality(quality);
-        renderEvaluation(evaluation);
-        renderPredictionComparison(predictionComparison);
         renderAdvice(report.hourly_advice);
         dataStatus.textContent = `已加载 ${marketDate}`;
+        loadModelReview(marketDate, loadId);
+      }
+
+      async function loadModelReview(marketDate, loadId) {
+        evaluationBox.innerHTML = `<div class="empty">正在计算最近 3 天模型回测...</div>`;
+        try {
+          const [evaluation, predictionComparison] = await Promise.all([
+            api(`/api/evaluation/day-ahead?end_date=${marketDate}&days=3`),
+            apiOrNull(`/api/evaluation/day-ahead/${marketDate}`),
+          ]);
+          if (loadId !== activeLoadId) return;
+          renderEvaluation(evaluation);
+          renderPredictionComparison(predictionComparison);
+        } catch (err) {
+          if (loadId !== activeLoadId) return;
+          evaluationBox.innerHTML = `<div class="empty">模型回测加载较慢或失败，不影响主分析。可稍后刷新重试。</div>`;
+          renderPredictionComparison(null);
+        }
       }
 
       async function init() {
